@@ -1,0 +1,444 @@
+From 33cc5c47b48ab35ec5ba54e79f87a4c21b41a341 Mon Sep 17 00:00:00 2001
+From: "jianxing.guo" <jianxing.guo@cs2c.com.cn>
+Date: Wed, 11 Sep 2019 16:21:49 +0800
+Subject: [PATCH] better backup and stamper
+
+---
+ pyanaconda/backup.py         | 179 ++++++++++++++++++++++++-------------------
+ pyanaconda/stamperInstall.py |  32 ++++----
+ 2 files changed, 113 insertions(+), 98 deletions(-)
+
+diff --git a/pyanaconda/backup.py b/pyanaconda/backup.py
+index bf9acca..827b5b9 100644
+--- a/pyanaconda/backup.py
++++ b/pyanaconda/backup.py
+@@ -15,21 +15,40 @@ import logging
+ import string 
+ 
+ ret1 = int(time.strftime("%H%M%S", time.localtime()))
+-class PyApp(Gtk.Window):
++
++class BackupGuiObject(Gtk.Window):
+     WIDTH, HEIGHT = 840, 472
+     def __init__(self):
+-	super(PyApp, self).__init__()
+-	self.select_bk = 0
++	super(BackupGuiObject, self).__init__()
+ 	self.set_title("")
++	self.set_decorated(False)
+ 	self.set_size_request(self.WIDTH, self.HEIGHT)
+ 	self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+-        button1 = Gtk.RadioButton.new_with_label_from_widget(None, "")
+-        button1.connect("clicked", self.on_clicked_backup)
+ 
+-        button2 = Gtk.RadioButton.new_from_widget(button1)
+-        button2.connect("clicked", self.on_clicked_restore)
++class G_SELECTED_BK(object):
++    i = 0
++g_selected_bk = G_SELECTED_BK()
++
++
++class PyApp(BackupGuiObject):
++    def __init__(self):
++	super(PyApp, self).__init__()
++	self.select_bk = g_selected_bk.i
++        if self.select_bk == 0:
++            button1 = Gtk.RadioButton.new_with_label_from_widget(None, "")
++            button2 = Gtk.RadioButton.new_with_label_from_widget(button1, "")
++            button3 = Gtk.RadioButton.new_with_label_from_widget(button2, "")
++        elif self.select_bk == 1:
++            button2 = Gtk.RadioButton.new_with_label_from_widget(None, "")
++            button1 = Gtk.RadioButton.new_with_label_from_widget(button2, "")
++            button3 = Gtk.RadioButton.new_with_label_from_widget(button1, "")
++        elif self.select_bk == 2:
++            button3 = Gtk.RadioButton.new_with_label_from_widget(None, "")
++            button1 = Gtk.RadioButton.new_with_label_from_widget(button3, "")
++            button2 = Gtk.RadioButton.new_with_label_from_widget(button1, "")
+ 
+-        button3 = Gtk.RadioButton.new_from_widget(button2)
++        button1.connect("clicked", self.on_clicked_backup)
++        button2.connect("clicked", self.on_clicked_restore)
+         button3.connect("clicked", self.on_clicked_stamper)
+ 	
+ 	ok = Gtk.Button()
+@@ -52,19 +71,23 @@ class PyApp(Gtk.Window):
+ 	fixed.put(ok, 570, 395)
+ 	fixed.put(quit, 690, 395)
+ 	fixed.put(button1, 489, 199)
+-	fixed.put(button2, 492, 252)
+-        fixed.put(button3, 493, 303)
++	fixed.put(button2, 489, 250)
++        fixed.put(button3, 489, 300)
+ 	self.connect("destroy", Gtk.main_quit)
+ 	self.add(fixed)
+ 	self.show_all()
++
+     def on_destroy(self, widget):
+ 	Gtk.main_quit()
+ 
+     def on_clicked_backup(self, widget):
++	g_selected_bk.i = 0
+ 	self.select_bk = 0
+     def on_clicked_restore(self, widget):
++	g_selected_bk.i = 1
+ 	self.select_bk = 1
+     def on_clicked_stamper(self,widget):
++	g_selected_bk.i = 2
+         self.select_bk = 2
+ 
+     def on_clicked_quit(self, widget):
+@@ -105,14 +128,9 @@ class PyApp(Gtk.Window):
+                     ProgressBarStamper()
+                 dialog.destroy()
+ 
+-class Backup(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+-
++class Backup(BackupGuiObject):
+     def __init__(self):
+         super(Backup, self).__init__()
+-        self.set_title("")
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+ 
+         fixed = Gtk.Fixed()
+ 
+@@ -191,20 +209,14 @@ class Backup(Gtk.Window):
+ 
+     def on_node_selected(self, widget, row, col):
+         model = widget.get_model()
+-        print "BBBB %s", model[row][0]
+-
+-class Restore(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+ 
++class Restore(BackupGuiObject):
+     def __init__(self):
+         super(Restore, self).__init__()
+-        self.set_title("")
+ #	first_model = os.popen(r"ls /backup |awk -F ' ' '{print $1}' |awk 'NR==1{print}'", "r")
+ #        self.selected_model = first_model.read()[-1]
+ 	
+ 	self.file_lst = []
+-	self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+ 	fixed = Gtk.Fixed()
+ 
+         main_vbox = Gtk.VBox(False, 8)
+@@ -346,14 +358,35 @@ class Restore(Gtk.Window):
+ 	Gtk.Widget.hide(self)
+ 	PyApp()	
+ 
+-class DialogWarn(Gtk.Dialog):
++class DialogwarnGuiObject(Gtk.Dialog):
++    def __init__(self):
++        self.set_default_size(150, 100)
++        self.set_decorated(False)
++        provider = Gtk.CssProvider()
++        css = """
++           button{font-size:11px;background: #0073dd;color:#ebedf5;box-shadow:0 0 2px white;}
++           button:hover{font-weight:bold;background: #3888ef;color:#ebedf5;box-shadow:0 0 2px white;}
++           button:active{font-weight:bold;background: #3888ef;color:#66a7e2;box-shadow:0 0 3px white ;}
++           dialog {background: #ebedf5;box-shadow:0 0 20px #000;}
++        """
++        # css = """
++        #    button {background: transparent}
++        #    dialog {background: transparent}
++        # """
++        provider.load_from_data(bytes(css.encode()));
++        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider,
++                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+ 
+-    def __init__(self, parent):
+-        dlg = Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+-             Gtk.STOCK_OK, Gtk.ResponseType.OK))
+ 
+-        self.set_default_size(150, 100)
++class DialogWarn(DialogwarnGuiObject):
++
++    def __init__(self, parent):
++        Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
++            #(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
++            # Gtk.STOCK_OK, Gtk.ResponseType.OK))
++            ("取消", Gtk.ResponseType.CANCEL,
++             "确定", Gtk.ResponseType.OK))
++	super(DialogWarn, self).__init__()
+ 	path_files = glob.glob('/backup/*')
+ 	if len(path_files) == 2 :
+             label = Gtk.Label("备份功能会有数据风险，请谨慎操作。\n该操作将覆盖最近一次备份，\n确认继续系统备份？")
+@@ -363,32 +396,32 @@ class DialogWarn(Gtk.Dialog):
+         box.add(label)
+         self.show_all()
+ 
+-class DialogWarn1(Gtk.Dialog):
++class DialogWarn1(DialogwarnGuiObject):
+     def __init__(self, parent):
+         Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+-             Gtk.STOCK_OK, Gtk.ResponseType.OK))
++            ("取消", Gtk.ResponseType.CANCEL,
++             "确定", Gtk.ResponseType.OK))
++	super(DialogWarn1, self).__init__()
+ 
+-        self.set_default_size(150, 100)
+         label = Gtk.Label("还原操作可能会丢失用户数据， \n确认系统还原？")
+      
+ 	box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+-class DialogWarn2(Gtk.Dialog):
++
++class DialogWarn2(DialogwarnGuiObject):
+     def __init__(self, parent):
+         Gtk.Dialog.__init__(self, "确认操作", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+-             Gtk.STOCK_OK, Gtk.ResponseType.OK))
+-
+-        self.set_default_size(150, 100)
+-        label = Gtk.Label("确认删除此备份节点？")
++            ("取消", Gtk.ResponseType.CANCEL,
++             "确定", Gtk.ResponseType.OK))
++	super(DialogWarn2, self).__init__()
++        label = Gtk.Label("\n确认删除此备份节点？")
+      
+ 	box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+ 
+-class DialogWarn_err(Gtk.Dialog):
++class DialogWarn_err(DialogwarnGuiObject):
+     def __init__(self, parent):
+         dlg = Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+                                   ("取消", Gtk.ResponseType.CANCEL))
+@@ -398,7 +431,8 @@ class DialogWarn_err(Gtk.Dialog):
+         box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+-class DialogWarn_err2(Gtk.Dialog):
++
++class DialogWarn_err2(DialogwarnGuiObject):
+     def __init__(self, parent):
+         dlg = Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+                                   ("取消", Gtk.ResponseType.CANCEL))
+@@ -409,51 +443,50 @@ class DialogWarn_err2(Gtk.Dialog):
+         box.add(label)
+         self.show_all()
+ 
+-class DialogWarn3(Gtk.Dialog):
++class DialogWarn3(DialogwarnGuiObject):
+     def __init__(self, parent):
+         dlg = Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+-             Gtk.STOCK_OK, Gtk.ResponseType.OK))
++            ("取消", Gtk.ResponseType.CANCEL,
++             "确定", Gtk.ResponseType.OK))
++	super(DialogWarn3, self).__init__()
+ 
+-        self.set_default_size(150, 100)
+         path_files = glob.glob('/NeoKylin-*')
+         if len(path_files) >= 1 :
+-            label = Gtk.Label("该操作将覆盖最近制作的母盘，\n  确认继续制作母盘？")
++            label = Gtk.Label("\n该操作将覆盖最近制作的母盘，\n  确认继续制作母盘？")
+         else:
+-            label = Gtk.Label("确认制作母盘？")
++            label = Gtk.Label("\n确认制作母盘？")
+         box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+-class DialogWarn4(Gtk.Dialog):
++
++class DialogWarn4(DialogwarnGuiObject):
+     def __init__(self, parent):
+         Gtk.Dialog.__init__(self, "确认操作", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+-             Gtk.STOCK_OK, Gtk.ResponseType.OK))
++            ("取消", Gtk.ResponseType.CANCEL,
++             "确定", Gtk.ResponseType.OK))
++	super(DialogWarn_size, self).__init__()
+ 
+-        self.set_default_size(150, 100)
+-        label = Gtk.Label("确认初始化恢复操作？ \n用户数据可能会丢失。")
++        label = Gtk.Label("\n确认初始化恢复操作？ \n用户数据可能会丢失。")
+      
+ 	box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+ 
+-class DialogWarn_size(Gtk.Dialog):
++class DialogWarn_size(DialogwarnGuiObject):
+     def __init__(self, parent):
+         dlg = Gtk.Dialog.__init__(self, "确认操作？", parent, 0,
+-            (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL))
++            ("取消", Gtk.ResponseType.CANCEL))
+ 
+-        self.set_default_size(150, 100)
+-        label = Gtk.Label("    /home分区下数据过大，  \n无法继续制作母盘!")
++	super(DialogWarn_size, self).__init__()
++        label = Gtk.Label("\n   /home分区下数据过大，  \n无法继续制作母盘!")
+         box = self.get_content_area()
+         box.add(label)
+         self.show_all()
+ 
+ 
+-class ProgressBarWindow1(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472 
+-
++class ProgressBarWindow1(BackupGuiObject):
+     def __init__(self):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarWindow1, self).__init__()
+ #        self.set_border_width(10)
+         self.table = Gtk.Table(10, 10, True)
+         
+@@ -463,9 +496,6 @@ class ProgressBarWindow1(Gtk.Window):
+         vbox = Gtk.VBox(False, 3)
+         vbox.set_size_request(700, 10)
+ 
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+-
+         self.progressbar = Gtk.ProgressBar()
+         vbox.pack_start(self.progressbar, True, True, 0)
+ 	
+@@ -498,11 +528,9 @@ class ProgressBarWindow1(Gtk.Window):
+     def on_clicked_poweroff(self, widget):
+         os.system("poweroff")
+ 
+-class ProgressBarBackup(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472 
+-
++class ProgressBarBackup(BackupGuiObject):
+     def __init__(self):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarBackup, self).__init__()
+ #        self.set_border_width(5)
+         self.table = Gtk.Table(10, 10, True)
+ 
+@@ -592,11 +620,9 @@ class ProgressBarBackup(Gtk.Window):
+ 
+ 	return True
+ 
+-class ProgressBarRestore(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+-
++class ProgressBarRestore(BackupGuiObject):
+     def __init__(self, rst_file):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarRestore, self).__init__()
+ #        self.set_border_width(5)
+         self.table = Gtk.Table(10, 10, True)
+ 
+@@ -612,8 +638,6 @@ class ProgressBarRestore(Gtk.Window):
+         print("{0}", ret1)
+         self.t_beg = ((ret1/10000*3600)+(((ret1/100)%100)*60)+(ret1%100))
+ 
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+ #        label1 = Gtk.Label()
+         self.label2 = Gtk.Label()
+         self.label2.modify_fg(Gtk.StateType.NORMAL,Gdk.color_parse("white"))
+@@ -686,11 +710,9 @@ class ProgressBarRestore(Gtk.Window):
+ 
+ 	return True
+ 
+-class ProgressBarStamper(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+-
++class ProgressBarStamper(BackupGuiObject):
+     def __init__(self):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarStamper, self).__init__()
+ #        self.set_border_width(5)
+         self.table = Gtk.Table(10, 10, True)
+ 
+@@ -706,9 +728,6 @@ class ProgressBarStamper(Gtk.Window):
+         print("{0}", ret1)
+         self.t_beg = ((ret1/10000*3600)+(((ret1/100)%100)*60)+(ret1%100))
+ 
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+-
+         self.label2 = Gtk.Label()
+         self.label2.modify_fg(Gtk.StateType.NORMAL,Gdk.color_parse("white"))
+         self.label4 = Gtk.Label()
+diff --git a/pyanaconda/stamperInstall.py b/pyanaconda/stamperInstall.py
+index 749d960..3fd26e1 100644
+--- a/pyanaconda/stamperInstall.py
++++ b/pyanaconda/stamperInstall.py
+@@ -12,14 +12,20 @@ from gi.repository import Gtk, Gdk, GLib
+ 
+ ret1 = int(time.strftime("%H%M%S", time.localtime()))
+ 
+-class Stamper(Gtk.Window):
++class BackupGuiObject(Gtk.Window):
+     WIDTH, HEIGHT = 840, 472
+     def __init__(self):
++        super(BackupGuiObject, self).__init__()
++        self.set_title("")
++        self.set_decorated(False)
++        self.set_size_request(self.WIDTH, self.HEIGHT)
++        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
++
++
++class Stamper(BackupGuiObject):
++    def __init__(self):
+ 	super(Stamper, self).__init__()
+ 	self.state = 'n'
+-	self.set_title("")
+-	self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+          
+ 	fixed = Gtk.Fixed()
+ 
+@@ -61,11 +67,9 @@ class Stamper(Gtk.Window):
+     def on_clicked_reboot(self, widget):
+         os.system("reboot")
+    
+-class ProgressBarWindow(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+-
++class ProgressBarWindow(BackupGuiObject):
+     def __init__(self, state):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarWindow, self).__init__()
+ #        self.set_border_width(10)
+         self.table = Gtk.Table(10, 10, True)
+ 
+@@ -81,9 +85,6 @@ class ProgressBarWindow(Gtk.Window):
+         print("{0}", ret1)
+         self.t_beg = ((ret1/10000*3600)+(((ret1/100)%100)*60)+(ret1%100))
+ 
+-
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+ #        label1 = Gtk.Label()
+         self.label2 = Gtk.Label()
+         self.label2.modify_fg(Gtk.StateType.NORMAL,Gdk.color_parse("white"))
+@@ -145,11 +146,9 @@ class ProgressBarWindow(Gtk.Window):
+ 
+         return True
+ 
+-class ProgressBarWindow1(Gtk.Window):
+-    WIDTH, HEIGHT = 840, 472
+-
++class ProgressBarWindow1(BackupGuiObject):
+     def __init__(self):
+-        Gtk.Window.__init__(self, title="")
++	super(ProgressBarWindow1, self).__init__()
+ #        self.set_border_width(10)
+         self.table = Gtk.Table(10, 10, True)
+ 
+@@ -159,9 +158,6 @@ class ProgressBarWindow1(Gtk.Window):
+         vbox = Gtk.VBox(False, 3)
+         vbox.set_size_request(700, 10)
+ 
+-        self.set_size_request(self.WIDTH, self.HEIGHT)
+-        self.move((Gdk.Screen.width() - self.WIDTH) / 2, (Gdk.Screen.height() - self.HEIGHT) / 2)
+-
+         self.progressbar = Gtk.ProgressBar()
+         vbox.pack_start(self.progressbar, True, True, 0)
+ 
+-- 
+1.8.3.1
+
